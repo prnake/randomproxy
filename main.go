@@ -232,10 +232,10 @@ func getIPAddress(ctx g.Ctx, domain string) (ip string, ipv6 bool, err error) {
 }
 func main() {
 	ctx := gctx.New()
-	Addr := ":31280"
+	Addr := "127.0.0.1:31280"
 	port := g.Cfg().MustGetWithEnv(ctx, "PORT").String()
 	if port != "" {
-		Addr = ":" + port
+		Addr = "127.0.0.1:" + port
 	}
 
 	server := &http.Server{
