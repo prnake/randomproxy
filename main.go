@@ -85,6 +85,9 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	if isipv6 && ipv6sub != "" {
 		tempIP, _ := randomIPV6FromSubnet(ipv6sub)
 		ip = tempIP.String()
+	} else {
+		http.Error(w, "target website not support ipv6", http.StatusServiceUnavailable)
+		return
 	}
 
 	// g.Log().Debug(ctx, "ip", ip)
@@ -141,17 +144,63 @@ func transfer(destination io.WriteCloser, source io.ReadCloser) {
 	io.Copy(destination, source)
 }
 
+// Modified handleHTTP function
 func handleHTTP(ctx g.Ctx, w http.ResponseWriter, req *http.Request) {
-	resp, err := http.DefaultTransport.RoundTrip(req)
+	var IPS []interface{}
+
+    _, isipv6, err := getIPAddress(ctx, req.Host)
 	if err != nil {
+		g.Log().Error(ctx, err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	defer resp.Body.Close()
+	if isipv6 {
+		IPS = g.Cfg().MustGet(ctx, "IP6S").Slice()
+	} else {
+		// g.Log().Debug(ctx, "serverIP", serverIP)
+		IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
+	}
+	if len(IPS) == 0 {
+		IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
+	}
 
-	copyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	IPA := garray.NewArrayFrom(IPS)
+	IP, found := IPA.Rand()
+	if !found {
+		g.Log().Error(ctx, "no ip found")
+		http.Error(w, "no ip found", http.StatusServiceUnavailable)
+		return
+	}
+	ip := gconv.String(IP)
+	ipv6sub := g.Cfg().MustGet(ctx, "IP6SUB").String()
+	if isipv6 && ipv6sub != "" {
+		tempIP, _ := randomIPV6FromSubnet(ipv6sub)
+		ip = tempIP.String()
+	} else {
+		http.Error(w, "target website not support ipv6", http.StatusServiceUnavailable)
+		return
+	}
+
+    transport := &http.Transport{
+        Proxy: http.ProxyFromEnvironment,
+        DialContext: (&net.Dialer{
+            LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 0},
+            Timeout:   120 * time.Second,
+            KeepAlive: 120 * time.Second,
+        }).DialContext,
+        TLSHandshakeTimeout: 10 * time.Second,
+    }
+
+    resp, err := transport.RoundTrip(req)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusServiceUnavailable)
+        return
+    }
+    defer resp.Body.Close()
+
+    copyHeader(w.Header(), resp.Header)
+    w.WriteHeader(resp.StatusCode)
+    io.Copy(w, resp.Body)
 }
 
 func copyHeader(dst, src http.Header) {
